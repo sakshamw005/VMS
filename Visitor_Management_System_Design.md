@@ -1,29 +1,73 @@
 # Visitor Management System Design
 
-## Overview
 This document provides a comprehensive overview of the architecture, data flow, and database structure for the Visitor Management System (VMS).
 
 ---
 
 ## High-Level Design (HLD)
 
+This diagram illustrates the data flow from the frontend to the database, incorporating **Redis Cache and Workers** for asynchronous processing.
+
+```mermaid
+graph TD
+    subgraph Client_Side [Client Side]
+        FE[Frontend - Web Portal / Security Desk / Kiosk]
+    end
+
+    subgraph API_Layer [API Layer]
+        LB[Load Balancer / Nginx]
+        BE[Backend Application Servers]
+    end
+
+    subgraph Data_Storage [Data Storage]
+        DB[(MySQL / MongoDB)]
+        RC[(Redis Cache)]
+        RQ[(Redis - Task Queue)]
+    end
+
+    subgraph Asynchronous_Workers [Asynchronous Workers]
+        WR[Worker Processes]
+        NS[Notification Service]
+        QR[QR / Pass Generator]
+        AL[Audit Logging Service]
+    end
+
+    FE -- HTTPS/REST --> LB
+    LB --> BE
+    BE -- CRUD Operations --> DB
+    BE -- Cache Frequent Data --> RC
+    BE -- Enqueue Tasks --> RQ
+    RQ -- Pull Tasks --> WR
+    WR -- Send Notifications --> NS
+    WR -- Generate Pass --> QR
+    WR -- Log Activity --> AL
+    QR --> DB
+    AL --> DB
+    NS -- Notify Host/Guard --> FE
+```
+
+---
+
+## Low-Level Design (LLD) - Class Diagram
+
+The class diagram outlines the relationships between controllers, models, and core services.
+
+```mermaid
 classDiagram
     class User {
         +String name
         +String email
-        +String phone
+        +String password
         +String role
-        +register()
         +login()
+        +register()
     }
 
     class Visitor {
         +String fullName
         +String contactInfo
-        +String companyName
-        +String purposeOfVisit
-        +DateTime checkInTime
-        +DateTime checkOutTime
+        +String company
+        +String purpose
         +capturePhoto()
         +registerVisitor()
     }
@@ -36,135 +80,175 @@ classDiagram
     }
 
     class VisitRequest {
-        +ObjectId visitorId
-        +ObjectId hostId
+        +ObjectId visitor_id
+        +ObjectId host_id
         +Enum status
-        +DateTime visitDate
+        +DateTime visit_time
         +submitRequest()
         +updateStatus()
     }
 
     class VisitorPass {
-        +ObjectId requestId
-        +String qrCode
-        +DateTime validFrom
-        +DateTime validTill
+        +ObjectId request_id
+        +String qr_code
+        +DateTime valid_from
+        +DateTime valid_till
         +generatePass()
-        +expirePass()
-    }
-
-    class AuditLog {
-        +String action
-        +ObjectId userId
-        +DateTime timestamp
-        +logEvent()
     }
 
     class VisitorController {
         +registerVisitor()
-        +checkInVisitor()
-        +checkOutVisitor()
-        +getVisitorDetails()
+        +checkIn()
+        +checkOut()
     }
 
     class ApprovalController {
-        +createVisitRequest()
-        +respondToApproval()
-        +preApproveVisitor()
+        +createRequest()
+        +respondApproval()
+        +preApprove()
     }
 
     class WorkerService {
         +sendNotification()
-        +generateQRCode()
-        +storeAuditTrail()
+        +generateQR()
+        +logActivity()
     }
 
-    User "1" -- "0..N" VisitRequest : creates / manages
+    User "1" -- "0..N" VisitRequest : manages
+    Visitor "1" -- "0..N" VisitRequest : creates
     HostEmployee "1" -- "0..N" VisitRequest : approves
-    Visitor "1" -- "0..N" VisitRequest : belongs to
     VisitRequest "1" -- "0..1" VisitorPass : generates
-    User "1" -- "0..N" AuditLog : produces
     VisitorController ..> Visitor : interacts
     ApprovalController ..> VisitRequest : manages
     WorkerService ..> VisitorPass : generates
-    WorkerService ..> AuditLog : records
+```
 
 ---
 
-## Low-Level Design (LLD) - Class Diagram
+## Entity-Relationship (ER) Diagram
 
-- User: name, email, role
-- Visitor: details, photo, check-in/out
-- HostEmployee: approval actions
-- VisitRequest: status, timestamps
-- VisitorPass: QR, validity
-- AuditLog: actions tracking
+A relational view of the database schemas and their constraints.
+
+```mermaid
+erDiagram
+    USER ||--o{ VISIT_REQUEST : creates
+    HOST_EMPLOYEE ||--o{ VISIT_REQUEST : approves
+    VISITOR ||--o{ VISIT_REQUEST : submits
+    VISIT_REQUEST ||--o| VISITOR_PASS : generates
+
+    USER {
+        ObjectId _id PK
+        String name
+        String email
+        String password_hash
+        String role
+        Date createdAt
+    }
+
+    HOST_EMPLOYEE {
+        ObjectId _id PK
+        String employee_id
+        String department
+        String email
+    }
+
+    VISITOR {
+        ObjectId _id PK
+        String full_name
+        String contact_info
+        String company
+        String purpose
+        String photo_url
+    }
+
+    VISIT_REQUEST {
+        ObjectId _id PK
+        ObjectId visitor_id FK
+        ObjectId host_id FK
+        Enum status "PENDING, APPROVED, REJECTED"
+        DateTime visit_time
+        DateTime check_in
+        DateTime check_out
+    }
+
+    VISITOR_PASS {
+        ObjectId _id PK
+        ObjectId request_id FK
+        String qr_code
+        DateTime valid_from
+        DateTime valid_till
+    }
+```
 
 ---
 
-## ER Diagram (Entities)
+## Table Definitions & Idea
 
-- Users
-- HostEmployees
-- Visitors
-- VisitRequests
-- VisitorPasses
-- AuditLogs
-
----
-
-## Table Definitions
-
-Users: authentication  
-Visitors: visitor info  
-VisitRequests: approval flow  
-VisitorPasses: QR-based access  
-AuditLogs: system tracking  
+| Table (Collection) | Description | Key Fields | Purpose |
+|---|---|---|---|
+| Users | System users (Admin, Guard) | _id, email, password_hash, role | Authentication & access |
+| HostEmployees | Employees receiving visitors | _id, employee_id, department | Approval authority |
+| Visitors | Visitor details | _id, full_name, contact_info, purpose | Identity tracking |
+| VisitRequests | Approval workflow | _id, visitor_id, host_id, status | Core logic |
+| VisitorPasses | QR-based entry pass | _id, request_id, qr_code | Entry validation |
+| AuditLogs | System logs | _id, action, user_id, timestamp | Monitoring |
 
 ---
 
-## Data Flow
+## Data Flow Breakdown (Visual Summary)
 
-1. Visitor registers  
-2. Request created (PENDING)  
-3. Notification sent  
-4. Host approves/rejects  
-5. Pass generated  
-6. Check-in & check-out  
-7. Logs stored  
+1. Frontend: Security guard enters visitor details  
+2. API: VisitorController.registerVisitor handles request  
+3. Database: Visitor stored  
+4. Request: VisitRequest created with status PENDING  
+5. Queue: Task sent to Redis  
+6. Worker: Notifies host employee  
+7. Approval: Host approves/rejects  
+8. Pass: QR-based visitor pass generated  
+9. Check-in: Visitor enters  
+10. Check-out: Exit recorded  
+11. Logs: Stored for audit  
 
 ---
 
 ## Caching
 
-- Cache visitor + employee data  
-- Faster QR validation  
-- Reduces DB load  
+- Cache frequently accessed data such as employee details and active visitor passes  
+- Improves response time  
+- Reduces database load  
+- Example: QR validation can be done via Redis instead of DB  
 
 ---
 
-## Authentication
+## Authentication & Authorization
 
-- Role-based access (Admin, Guard, Employee)  
-- Secure login (JWT / sessions)  
+- Role-based access:
+  - Admin
+  - Security Guard
+  - Host Employee  
+
+- Secure login using JWT / sessions  
+- Ensures only authorized access  
 
 ---
 
-## Reliability
+## Reliability & Failure Handling
 
-- Backup & recovery  
+- Backup and recovery mechanisms  
 - Retry failed notifications  
-- Error handling  
+- Graceful error handling  
+- Audit logging for debugging  
 
 ---
 
 ## Trade-offs
 
-- Security vs speed  
-- Caching vs freshness  
+- Security vs Convenience  
+- Performance vs Data Freshness (Caching)  
+- Real-time processing vs system complexity  
 
 ---
 
 ## Conclusion
 
-System improves security, efficiency, and scalability.
+The Visitor Management System improves campus security, automates visitor tracking, and ensures efficient and scalable access control using modern system design principles.
