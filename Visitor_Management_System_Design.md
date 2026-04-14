@@ -7,11 +7,87 @@ This document provides a comprehensive overview of the architecture, data flow, 
 
 ## High-Level Design (HLD)
 
-```
-Client -> Load Balancer -> Backend -> Database
-                     -> Redis Cache
-                     -> Redis Queue -> Workers -> Notification / QR / Logs
-```
+classDiagram
+    class User {
+        +String name
+        +String email
+        +String phone
+        +String role
+        +register()
+        +login()
+    }
+
+    class Visitor {
+        +String fullName
+        +String contactInfo
+        +String companyName
+        +String purposeOfVisit
+        +DateTime checkInTime
+        +DateTime checkOutTime
+        +capturePhoto()
+        +registerVisitor()
+    }
+
+    class HostEmployee {
+        +String employeeId
+        +String department
+        +approveVisitor()
+        +rejectVisitor()
+    }
+
+    class VisitRequest {
+        +ObjectId visitorId
+        +ObjectId hostId
+        +Enum status
+        +DateTime visitDate
+        +submitRequest()
+        +updateStatus()
+    }
+
+    class VisitorPass {
+        +ObjectId requestId
+        +String qrCode
+        +DateTime validFrom
+        +DateTime validTill
+        +generatePass()
+        +expirePass()
+    }
+
+    class AuditLog {
+        +String action
+        +ObjectId userId
+        +DateTime timestamp
+        +logEvent()
+    }
+
+    class VisitorController {
+        +registerVisitor()
+        +checkInVisitor()
+        +checkOutVisitor()
+        +getVisitorDetails()
+    }
+
+    class ApprovalController {
+        +createVisitRequest()
+        +respondToApproval()
+        +preApproveVisitor()
+    }
+
+    class WorkerService {
+        +sendNotification()
+        +generateQRCode()
+        +storeAuditTrail()
+    }
+
+    User "1" -- "0..N" VisitRequest : creates / manages
+    HostEmployee "1" -- "0..N" VisitRequest : approves
+    Visitor "1" -- "0..N" VisitRequest : belongs to
+    VisitRequest "1" -- "0..1" VisitorPass : generates
+    User "1" -- "0..N" AuditLog : produces
+    VisitorController ..> Visitor : interacts
+    ApprovalController ..> VisitRequest : manages
+    WorkerService ..> VisitorPass : generates
+    WorkerService ..> AuditLog : records
 
 ---
 
